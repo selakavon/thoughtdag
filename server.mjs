@@ -11,6 +11,7 @@ import { createAnthropic } from '@ai-sdk/anthropic';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createDeepSeek } from '@ai-sdk/deepseek';
 import { getDocument, GlobalWorkerOptions } from 'pdfjs-dist/legacy/build/pdf.mjs';
+import { createClaudePrint, locateClaude, claudeAuthStatus, CLAUDE_PRINT_MODELS, isClaudePrintURL } from './runtime/claude-print.mjs';
 // Inside Electron's utilityProcess pdfjs does not consider itself in Node
 // (process.versions.electron flips its environment check) and refuses to run
 // without a workerSrc. Point its fake worker at the real worker module so
@@ -25,10 +26,11 @@ import os from 'os';
 
 // ─── Environment ────────────────────────────────────────────────
 // Minimal .env loader (avoids dotenv dependency and Node --env-file version quirks)
+const DOTENV_KEYS = new Set(); // what came from the file, as opposed to the shell
 try {
   for (const line of fs.readFileSync(new URL('.env', import.meta.url), 'utf8').split('\n')) {
     const m = line.match(/^\s*([\w.]+)\s*=\s*(.*?)\s*$/);
-    if (m && !(m[1] in process.env)) process.env[m[1]] = m[2];
+    if (m && !(m[1] in process.env)) { process.env[m[1]] = m[2]; DOTENV_KEYS.add(m[1]); }
   }
 } catch { /* .env is optional — env vars may come from the shell */ }
 
@@ -176,6 +178,35 @@ if (process.env.OLLAMA_MODELS) {
     baseURL: (process.env.OLLAMA_BASE_URL || 'http://localhost:11434') + '/v1',
   });
   register(envModels('OLLAMA', []), 'Ollama', (id) => ollama(id), { vision: false });
+}
+
+// Claude Code (`claude -p`): the person's Claude plan answers through the
+// CLI's own login, no API key here. CLAUDE_CODE_MODELS="opus,sonnet" turns
+// it on at startup (the browser's "Claude plan" door does the same without
+// .env); CLAUDE_CODE_BIN names the binary when it is not on PATH;
+// CLAUDE_CODE_EFFORT sets a default effort level. The CLI runs stateless —
+// no tools, no session files — so the proxy's own search tools stay off for
+// these models (noTools): the CLI cannot call back into this process.
+// An ANTHROPIC_* key in ThoughtDAG's .env belongs to the proxy's Anthropic
+// provider; handed on to the CLI it would bill the API instead of the plan.
+// Keys from the shell are the person's own CLI setup and pass through.
+const CLAUDE_PRINT_ENV = Object.fromEntries([...DOTENV_KEYS].filter((k) => k.startsWith('ANTHROPIC_')).map((k) => [k, undefined]));
+const claudePrint = createClaudePrint({ effort: process.env.CLAUDE_CODE_EFFORT || undefined, env: CLAUDE_PRINT_ENV });
+/** Is the CLI here and signed in? `{ ok }` or `{ ok: false, error }` in the person's words. */
+async function claudePrintReady() {
+  const { path: bin, searched } = await locateClaude();
+  if (!bin) return { ok: false, error: `claude is not installed on this machine (no \`claude\` in ${searched.length} places checked, e.g. ${searched.slice(0, 3).join(', ')}). Install Claude Code and sign in, or set CLAUDE_CODE_BIN to its path.` };
+  const auth = await claudeAuthStatus(bin, CLAUDE_PRINT_ENV);
+  if (auth && !auth.loggedIn) return { ok: false, error: 'claude is installed but not signed in — run `claude auth login` in a terminal, then try again.' };
+  return { ok: true, bin, auth };
+}
+if (process.env.CLAUDE_CODE_MODELS) {
+  const ids = envModels('CLAUDE_CODE', []).map((id) => (id.startsWith('claude-code/') ? id : `claude-code/${id}`));
+  register(ids, 'Claude Code', (id) => claudePrint(id), { vision: true, noTools: true });
+  void claudePrintReady().then((r) => {
+    if (!r.ok) console.warn(`⚠ CLAUDE_CODE_MODELS is set but ${r.error}`);
+    else console.log(`Claude Code: ${r.bin}${r.auth?.subscriptionType ? ` (${r.auth.authMethod ?? 'signed in'}, ${r.auth.subscriptionType} plan)` : ''} — ${ids.join(', ')}`);
+  });
 }
 
 if (Object.keys(modelRegistry).length === 0) {
@@ -799,6 +830,14 @@ const isOpenRouter = (baseURL) => /openrouter\.ai/i.test(String(baseURL));
 app.post('/api/probe-models', async (req, res) => {
   const { baseURL, apiKey } = req.body ?? {};
   if (!baseURL) { res.status(400).json({ error: 'baseURL required' }); return; }
+  // The Claude plan door has no endpoint to ask: the "probe" is whether the
+  // CLI is on this machine. Its catalog is the CLI's model aliases.
+  if (isClaudePrintURL(baseURL)) {
+    const ready = await claudePrintReady();
+    if (!ready.ok) { res.status(502).json({ error: ready.error }); return; }
+    res.json({ models: CLAUDE_PRINT_MODELS.map((m) => ({ id: m.id, vision: m.vision })) });
+    return;
+  }
   try {
     const r = await fetch(`${String(baseURL).replace(/\/$/, '')}/models`, {
       headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {},
@@ -838,6 +877,15 @@ function providerEntries(providers) {
     const baseURL = String(p.baseURL ?? '').replace(/\/$/, '');
     if (!baseURL) continue;
     const name = String(p.name || 'Custom').slice(0, 40);
+    if (isClaudePrintURL(baseURL)) {
+      // the Claude plan door: no endpoint, the local CLI answers
+      for (const m of (Array.isArray(p.models) ? p.models : []).map((x) => (typeof x === 'string' ? { id: x } : x)).filter((x) => x && x.id).slice(0, 12)) {
+        const id = String(m.id).startsWith('claude-code/') ? String(m.id) : `claude-code/${m.id}`;
+        if (out[id]) continue;
+        out[id] = { name: `${id.split('/').pop()} (${name})`, provider: name, vision: true, noTools: true, model: () => claudePrint(id) };
+      }
+      continue;
+    }
     const make = createOpenAICompatible({
       name: name.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
       apiKey: p.apiKey || 'none',
@@ -929,7 +977,7 @@ app.post('/api/runtime-key', async (req, res) => {
 // OpenRouter models take a reasoning switch; Zhipu's flash models always think
 // ("该模型始终思考，不支持关闭思考") and the provider library exposes no effort
 // level, so they keep their defaults.
-const noThink = (base) => ({ ...(base ?? {}), openrouter: { ...(base?.openrouter ?? {}), reasoning: { enabled: false } } });
+const noThink = (base) => ({ ...(base ?? {}), openrouter: { ...(base?.openrouter ?? {}), reasoning: { enabled: false } }, 'claude-code': { ...(base?.['claude-code'] ?? {}), effort: 'low' } });
 
 app.post('/api/claude', async (req, res) => {
   const { messages, model: modelId, images, providers, fast } = req.body;
@@ -986,7 +1034,8 @@ app.post('/api/stream', async (req, res) => {
   // One frame up front lets it say "searching the web" and stamp the answer.
   if (gatewayOnline) res.write(`data: ${JSON.stringify({ gatewaySearch: true })}\n\n`);
 
-  const tools = makeTools(
+  // a model that cannot call back into this process (the Claude plan CLI) gets no tools
+  const tools = entry.noTools ? undefined : makeTools(
     sources,
     (name, query) => {
       charsAtLastSearch = emittedChars;
@@ -995,6 +1044,10 @@ app.post('/api/stream', async (req, res) => {
     },
     { web: webSearch !== false && !gatewayOnline, scholar: scholarSearch !== false, mcp: mcpTools !== false, searchEngine, glm: findGlmSearch(providers), anysearchKey }
   );
+  // a client that leaves (the person stopped the turn, the tab closed) takes
+  // the generation with it — for a local CLI that means its process ends
+  const aborter = new AbortController();
+  res.on('close', () => aborter.abort());
 
   const prompt = toSdkPrompt(messages, images);
   if (tools) {
@@ -1019,6 +1072,7 @@ app.post('/api/stream', async (req, res) => {
       system: prompt.system,
       messages: prompt.messages,
       providerOptions: entry.providerOptions,
+      abortSignal: aborter.signal,
       tools,
       experimental_transform: smoothStream({ chunking: /[\u3040-\u30ff\u4e00-\u9fff]|\S+\s+/ }),
       stopWhen: stepCountIs(5),

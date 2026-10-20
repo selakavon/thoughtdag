@@ -163,6 +163,7 @@ export const en = {
   'provider.keyMissing': 'No API key entered. This endpoint needs one — saving without it would make every model call fail.',
   'provider.localHint': 'Locally running models need no key. Start Ollama, then use the button below to list the installed models.',
   'provider.chatgptBridgeHint': 'Use your ChatGPT plan: run npx openai-oauth in a terminal and sign in; the bridge listens at 127.0.0.1:10531. The desktop app and a locally run ThoughtDAG both connect to it directly; Node.js must be installed on this machine.',
+  'provider.claudeCodeHint': 'Use your Claude plan: install the Claude Code CLI on this machine and sign in (claude auth login). ThoughtDAG then asks it for each answer (claude -p) under your plan, with no API key. The desktop app and a locally run ThoughtDAG can use it; the hosted app cannot. A source run can also set CLAUDE_CODE_MODELS in .env.',
   'provider.bridgeHostedNotice': 'This page (the hosted app) cannot reach your machine, so this door is unavailable here. Download the desktop app or run ThoughtDAG locally to use it. To start right now: one-click OpenRouter sign-in, or any API key.',
   'provider.probe': 'Fetch model list',
   'provider.probing': 'Asking the endpoint…',

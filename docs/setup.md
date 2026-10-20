@@ -31,6 +31,8 @@ When a plan issues a key for a compatible endpoint, select its preset and paste 
 
 A consumer subscription does not necessarily include third-party API access. The **ChatGPT plan** entry is an optional local compatibility route: ThoughtDAG can connect to an adapter that is already running on the same machine, but the current app does not install or start that adapter for you. Without that local setup, OpenRouter, a provider API key, or local Ollama is the more direct route.
 
+The **Claude plan** entry uses the Claude Code CLI that is already installed and signed in on the same machine: for every answer the proxy runs `claude -p`, so usage draws on your plan and no API key is involved. **Fetch model list** checks that the CLI is present and signed in, then offers its model families (Opus, Sonnet, Haiku, Fable). The CLI runs with its own tools, settings, and session files switched off, and the answer is a plain completion: ThoughtDAG's web and scholarly search tools are not available on these models, and image input goes through as usual. The desktop app and a locally run ThoughtDAG can use this entry; the hosted app cannot reach your machine. For a source run, `.env` does the same without the interface: `CLAUDE_CODE_MODELS="opus,sonnet"` registers the models at startup, `CLAUDE_CODE_BIN` names the binary when it is not on `PATH`, and `CLAUDE_CODE_EFFORT` sets a default effort level (`low` to `max`). An `ANTHROPIC_API_KEY` in ThoughtDAG's `.env` is never handed to the CLI, so the plan is what answers.
+
 ## Local models with Ollama
 
 Start Ollama, then choose **Ollama → Fetch models** in **Connect a model**. The default local address is already supplied and no key is needed. Other local runtimes can be added through **Custom endpoint**.

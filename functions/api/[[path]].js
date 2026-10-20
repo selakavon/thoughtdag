@@ -24,7 +24,8 @@ function providerEntries(providers) {
   const out = {};
   for (const p of (Array.isArray(providers) ? providers : []).slice(0, 12)) {
     const baseURL = String(p.baseURL ?? '').replace(/\/$/, '');
-    if (!baseURL) continue;
+    // the Claude plan door (claude-code://local) is a local CLI: nothing a hosted worker can run
+    if (!baseURL || /^claude-code:/i.test(baseURL)) continue;
     const name = String(p.name || 'Custom').slice(0, 40);
     const make = createOpenAICompatible({
       name: name.toLowerCase().replace(/[^a-z0-9]+/g, '-'),

@@ -6,7 +6,7 @@ import { useUiStore, toast } from '../../lib/ui-store';
 import { useModels, setModelsCache } from '../../lib/use-models';
 import {
   PROVIDER_PRESETS, type ProviderPreset, type RuntimeModel, type RuntimeProvider,
-  guessVision, probeModels, pushProviders, saveProviders, storedProviders,
+  guessVision, isLocalOnlyURL, probeModels, pushProviders, saveProviders, storedProviders,
 } from '../../lib/runtime-providers';
 import { useT, fmt, useI18n } from '../../i18n';
 import { API_BASE } from '../../lib/constants';
@@ -71,7 +71,7 @@ export default function ApiKeyModal() {
   // alone is NOT "hosted" — the desktop shell serves same-origin from a
   // loopback address, and its bundled server reaches the bridge just fine.
   const isLoopback = ['localhost', '127.0.0.1', '[::1]'].includes(location.hostname);
-  const hostedBridgeBlocked = API_BASE === '' && !isLoopback && preset.baseURL.includes('127.0.0.1');
+  const hostedBridgeBlocked = API_BASE === '' && !isLoopback && isLocalOnlyURL(preset.baseURL);
   const [key, setKey] = useState('');
   const [customURL, setCustomURL] = useState('');
   const [customName, setCustomName] = useState('');

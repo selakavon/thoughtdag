@@ -36,6 +36,15 @@ export interface ProviderPreset {
   fixedModels?: string[];
 }
 
+/** The Claude plan door: not an endpoint but the Claude Code CLI on the
+    machine the proxy runs on (`claude -p`). The proxy recognises the
+    scheme, locates the binary and answers through the person's own login. */
+export const CLAUDE_CODE_URL = 'claude-code://local';
+/** Doors that only a proxy on the person's own machine can open: the local
+    bridges on 127.0.0.1 and the Claude plan CLI. The hosted app has no way
+    to reach either. */
+export const isLocalOnlyURL = (baseURL: string): boolean => baseURL.includes('127.0.0.1') || /^claude-code:/i.test(baseURL);
+
 export const PROVIDER_PRESETS: ProviderPreset[] = [
   // OpenRouter leads: one key reaches 300+ models, free-tier ones included
   // — the widest first door. GLM next: a generous free tier with the fewest
@@ -79,6 +88,11 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
   // reach a user's 127.0.0.1 anyway; the hint spells this out).
   { id: 'chatgpt-bridge', name: 'ChatGPT 订阅', region: 'zh', baseURL: 'http://127.0.0.1:10531/v1', noKey: true, hintKey: 'provider.chatgptBridgeHint' },
   { id: 'chatgpt-bridge-intl', name: 'ChatGPT plan', region: 'en', baseURL: 'http://127.0.0.1:10531/v1', noKey: true, hintKey: 'provider.chatgptBridgeHint' },
+  // Claude plan through the Claude Code CLI already signed in on this
+  // machine: the proxy runs `claude -p` per turn. The "probe" checks that
+  // the CLI is installed; the catalog is its model-family aliases.
+  { id: 'claude-code', name: 'Claude 订阅', region: 'zh', baseURL: CLAUDE_CODE_URL, noKey: true, hintKey: 'provider.claudeCodeHint', recommend: ['claude-code/opus', 'claude-code/sonnet'] },
+  { id: 'claude-code-intl', name: 'Claude plan', region: 'en', baseURL: CLAUDE_CODE_URL, noKey: true, hintKey: 'provider.claudeCodeHint', recommend: ['claude-code/opus', 'claude-code/sonnet'] },
   { id: 'custom', name: '', baseURL: '' },
 ];
 

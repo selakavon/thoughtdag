@@ -17,6 +17,7 @@ npm run lint
 ## 架构
 
 - `server.mjs` — 唯一后端文件：Express 代理，用 Vercel AI SDK（`ai` + `@ai-sdk/openai-compatible` + `zhipu-ai-provider`）调 LLM；含 agentic 网页搜索 + 行内引用（搜索后保证有综合回答）。
+- `runtime/claude-print.mjs` — `claude -p` 封装成 AI SDK 语言模型（Claude 订阅通过本机 Claude Code CLI 回答，无 API key）；`.env` 的 `CLAUDE_CODE_MODELS` 或界面里的"Claude 订阅"入口启用。测试：`npm run test:claude-print`（假 CLI，不花 token）。
 - `src/store/` — zustand 全局状态；持久化用 idb-keyval（IndexedDB）。
 - `src/components/` — 画布基于 `@xyflow/react`（React Flow）：`ThoughtNode`、`ThoughtEdgeView`、`SelectionToolbar`（圈选对齐，对齐前有确认提示）、`focus-panel/`。
 - `src/lib/api.ts` — 前端到 server.mjs 的调用层。

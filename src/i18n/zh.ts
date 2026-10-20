@@ -163,6 +163,7 @@ export const zh: Record<keyof typeof en, string> = {
   'provider.keyMissing': '还没有填 API key。这个接口需要 key 才能调用模型，保存后会全部请求失败。',
   'provider.localHint': '本地运行的模型不需要 key。启动 Ollama 后点下面的按钮，会自动列出已安装的模型。',
   'provider.chatgptBridgeHint': '用 ChatGPT 订阅额度：终端里运行 npx openai-oauth 并登录，本地桥会起在 127.0.0.1:10531。桌面版和本地运行的 ThoughtDAG 都能直接连接；需要电脑上装有 Node.js。',
+  'provider.claudeCodeHint': '用 Claude 订阅额度：在这台电脑上安装 Claude Code 命令行并登录（claude auth login），ThoughtDAG 每次回答都通过它（claude -p）走你的订阅，不需要 API key。桌面版和本地运行的 ThoughtDAG 可用，线上版不行。源码运行也可以在 .env 里设置 CLAUDE_CODE_MODELS。',
   'provider.bridgeHostedNotice': '此页面（线上版）连不到你的本机，通道在这里不可用。下载桌面版或本地运行 ThoughtDAG 即可使用。现在想直接开始：OpenRouter 一键授权，或任意 API key。',
   'provider.probe': '获取模型列表',
   'provider.probing': '正在询问接口…',
