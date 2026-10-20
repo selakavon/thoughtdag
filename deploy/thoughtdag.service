@@ -1,33 +1,25 @@
-# Installed to /etc/systemd/system/thoughtdag.service by deploy/install.sh,
-# which fills @NODE_BIN@ with the directory of the node that `nvm` provides.
+# User unit: installed to ~/.config/systemd/user/thoughtdag.service by
+# deploy/install.sh, which fills @NODE_BIN@ with the directory of the node that
+# `nvm` provides. Runs without a login session because lingering is on for ala.
+# Mount-namespace sandboxing (ProtectSystem, PrivateTmp) is left out: a user
+# unit on Ubuntu 24.04 cannot set it up without unprivileged user namespaces.
 [Unit]
 Description=ThoughtDAG (127.0.0.1:9122, published through the Cloudflare Tunnel)
 After=network-online.target
-Wants=network-online.target
 
 [Service]
 Type=simple
-User=ala
-Group=ala
 WorkingDirectory=/home/ala/x/thoughtdag
 EnvironmentFile=/home/ala/.config/thoughtdag/env
-Environment=HOME=/home/ala
 Environment=PATH=/home/ala/.local/bin:@NODE_BIN@:/usr/local/bin:/usr/bin:/bin
 Environment=TZ=Europe/Prague
 ExecStart=@NODE_BIN@/node server.mjs
 Restart=on-failure
 RestartSec=3
 NoNewPrivileges=yes
-PrivateTmp=yes
-ProtectSystem=full
-ProtectKernelTunables=yes
-ProtectKernelModules=yes
-ProtectControlGroups=yes
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 LockPersonality=yes
 RestrictRealtime=yes
-# No ProtectHome: the server runs the agent CLIs (claude, codex) as the user
-# and writes ~/.thoughtdag backups and ~/.claude session files.
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=default.target

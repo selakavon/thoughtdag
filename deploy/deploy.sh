@@ -7,6 +7,6 @@ export PATH="$HOME/.local/bin:$PATH"
 git pull --ff-only
 npm ci --no-audit --no-fund
 npm run build
-sudo -n systemctl restart thoughtdag
+systemctl --user restart thoughtdag
 sleep 3
 curl -fs 127.0.0.1:9122/api/models >/dev/null && echo "thoughtdag answers on 127.0.0.1:9122"
