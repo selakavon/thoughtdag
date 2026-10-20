@@ -3,16 +3,21 @@
 // model so the proxy's generation routes treat it like any other provider.
 // The person's Claude plan answers through the CLI's own login; no API key
 // passes through here. This is NOT the desktop agent runtime (agents/
-// claude.cjs): no tools, no working-directory edits, no session files — the
-// CLI is asked for an answer and nothing else.
+// claude.cjs): no working-directory edits, no session files, and only the
+// tools the operator names (by default the CLI's read-only web pair,
+// WebSearch and WebFetch, so the answer can look things up) — the CLI is
+// asked for an answer and nothing else.
 //
 // What the CLI gets: the system prompt REPLACES Claude Code's own (so the
 // coding-agent persona never leaks in), the conversation arrives as ONE user
 // message (stream-json input takes user turns only, so earlier turns are
 // rendered as a transcript ahead of the latest question), images on the
-// latest turn ride along as image blocks. Built-in tools, slash commands,
-// settings, MCP servers and session persistence are all switched off: the
-// turn is a stateless completion and costs the fewest tokens that way.
+// latest turn ride along as image blocks. Slash commands, settings and
+// session persistence are switched off; built-in tools are limited to the
+// configured list (pre-approved, since print mode cannot ask), and MCP
+// servers come only from an explicit config file: the turn is a stateless
+// completion and costs the fewest tokens that way. Each tool call the CLI
+// makes is reported on the reasoning channel as a one-line note.
 import { spawn, execFile } from 'node:child_process';
 import { createRequire } from 'node:module';
 import fs from 'node:fs';
@@ -157,13 +162,39 @@ const finishOf = (stop) => ({
 /** The `reasoning` call option in the CLI's effort words. */
 const effortOf = (reasoning) => (reasoning === 'none' || reasoning === 'minimal' ? 'low' : ['low', 'medium', 'high', 'xhigh', 'max'].includes(reasoning) ? reasoning : null);
 
+/** The CLI's read-only web pair: enough to look things up, nothing that edits or runs. */
+export const DEFAULT_TOOLS = 'WebSearch,WebFetch';
+
+/** Server names in a Claude Code MCP config (a file path or JSON text), for the allow list. */
+export function mcpServerNames(config) {
+  try {
+    const text = /^\s*\{/.test(config) ? config : fs.readFileSync(config, 'utf8');
+    return Object.keys(JSON.parse(text).mcpServers ?? {});
+  } catch { return []; }
+}
+
+/** One line describing a tool call, for the reasoning channel. */
+export function toolNote(block) {
+  const name = String(block?.name ?? 'tool');
+  const input = block?.input && typeof block.input === 'object' ? block.input : {};
+  if (name === 'WebSearch') return `Searching the web: ${input.query ?? ''}`.trim();
+  if (name === 'WebFetch') return `Reading ${input.url ?? ''}`.trim();
+  const short = name.replace(/^mcp__.+?__/, '');
+  const args = Object.entries(input).map(([k, v]) => `${k}=${typeof v === 'string' ? v : JSON.stringify(v)}`).join(' ');
+  return `${short}${args ? `: ${args}` : ''}`.slice(0, 200);
+}
+
 /**
  * A provider factory: `createClaudePrint(options)('claude-code/opus')` is a
  * language model (AI SDK spec v4). Options:
  *   bin     — the binary path, or a function returning it (default: locateClaude)
  *   env     — overrides on the child's environment; an undefined value deletes the variable
  *   cwd     — the working directory the CLI runs in (default: the OS temp dir — never a project)
- *   tools   — the CLI's `--tools` value (default '' = none)
+ *   tools   — the CLI's `--tools` value (default 'WebSearch,WebFetch'; '' = none); the listed
+ *             tools are also pre-approved. A request's providerOptions['claude-code'].tools
+ *             (a string) overrides it for that turn ('' switches the web off).
+ *   mcpConfig — a Claude Code MCP config file (path or JSON text) whose servers are offered
+ *             and pre-approved whenever tools are on (e.g. a browser-automation server)
  *   effort  — a default effort level; a request's providerOptions['claude-code'].effort or `reasoning` wins
  *   idleMs  — stop a CLI that has been silent this long (default 10 min)
  *   extraArgs — appended verbatim (an escape hatch for CLI flags not modelled here)
@@ -171,7 +202,9 @@ const effortOf = (reasoning) => (reasoning === 'none' || reasoning === 'minimal'
 export function createClaudePrint(options = {}) {
   const binOf = typeof options.bin === 'function' ? options.bin : options.bin ? async () => options.bin : async () => (await locateClaude()).path;
   const cwd = options.cwd || os.tmpdir();
-  const tools = options.tools ?? '';
+  const tools = options.tools ?? DEFAULT_TOOLS;
+  const mcpConfig = options.mcpConfig ? String(options.mcpConfig) : '';
+  const mcpServers = mcpConfig ? mcpServerNames(mcpConfig) : [];
   const idleMs = Number(options.idleMs) > 0 ? Number(options.idleMs) : 10 * 60 * 1000;
   const extraArgs = Array.isArray(options.extraArgs) ? options.extraArgs.map(String) : [];
   const envFor = () => {
@@ -190,19 +223,25 @@ export function createClaudePrint(options = {}) {
       const { system, content } = flattenPrompt(callOptions.prompt);
       const alias = String(callOptions.modelId).replace(/^claude-code\//, '');
       const effort = callOptions.providerOptions?.['claude-code']?.effort ?? effortOf(callOptions.reasoning) ?? options.effort ?? null;
+      const turnTools = callOptions.providerOptions?.['claude-code']?.tools;
+      const toolList = typeof turnTools === 'string' ? turnTools : tools;
+      // print mode cannot ask for permission, so what is offered is also allowed
+      const allowed = toolList ? [toolList, ...mcpServers.map((n) => `mcp__${n}`)].join(',') : '';
       // (`--bare` would be leaner still, but it skips the CLI's own login:
       // a plan user gets "Not logged in" — so settings are emptied instead)
       const args = [
         '-p', '--output-format', 'stream-json', '--input-format', 'stream-json', '--verbose', '--include-partial-messages',
         '--no-session-persistence', '--disable-slash-commands', '--strict-mcp-config', '--setting-sources', '',
-        '--tools', tools, '--permission-mode', 'default', '--model', alias,
+        '--tools', toolList, '--permission-mode', 'default', '--model', alias,
       ];
+      if (allowed) args.push('--allowedTools', allowed);
+      if (allowed && mcpConfig) args.push('--mcp-config', mcpConfig);
       if (system) args.push('--system-prompt', system);
       if (effort) args.push('--effort', String(effort));
       args.push(...extraArgs);
 
       const warnings = [];
-      if (callOptions.tools?.length) warnings.push({ type: 'unsupported', feature: 'tools', details: 'claude -p answers with its own tools switched off; request tools are dropped' });
+      if (callOptions.tools?.length) warnings.push({ type: 'unsupported', feature: 'tools', details: 'claude -p runs its own tools only; request tools are dropped' });
       for (const k of ['temperature', 'topP', 'topK', 'stopSequences', 'seed', 'presencePenalty', 'frequencyPenalty']) {
         if (callOptions[k] !== undefined) warnings.push({ type: 'unsupported', feature: k });
       }
@@ -215,6 +254,7 @@ export function createClaudePrint(options = {}) {
       let resultSeen = false;
       let usage = EMPTY_USAGE; let stop = undefined;
       const open = new Map(); // content block index → { kind, id }
+      let seq = 0; // part ids stay unique across the CLI's turns (indexes restart per message)
       let apiError = null;
 
       const finish = (err) => {
@@ -254,7 +294,7 @@ export function createClaudePrint(options = {}) {
             } else if (ev.type === 'content_block_start') {
               const kind = ev.content_block?.type;
               if (kind === 'text' || kind === 'thinking') {
-                const id = `${kind}-${ev.index}`;
+                const id = `${kind}-${seq++}`;
                 open.set(ev.index, { kind, id });
                 onPart({ type: kind === 'thinking' ? 'reasoning-start' : 'text-start', id });
               }
@@ -271,10 +311,19 @@ export function createClaudePrint(options = {}) {
             }
             break;
           }
-          case 'assistant':
+          case 'assistant': {
             // an API-level failure arrives as a synthetic assistant message; the result repeats it
-            if (m.error || m.is_api_error_message) apiError = m.message?.content?.find?.((b) => b.type === 'text')?.text ?? String(m.error ?? 'API error');
+            if (m.error || m.is_api_error_message) { apiError = m.message?.content?.find?.((b) => b.type === 'text')?.text ?? String(m.error ?? 'API error'); break; }
+            // a tool call the CLI made: one line on the reasoning channel, so the person sees what was looked up
+            for (const b of m.message?.content ?? []) {
+              if (b?.type !== 'tool_use') continue;
+              const id = `tool-${seq++}`;
+              onPart({ type: 'reasoning-start', id });
+              onPart({ type: 'reasoning-delta', id, delta: toolNote(b) });
+              onPart({ type: 'reasoning-end', id });
+            }
             break;
+          }
           case 'result': {
             resultSeen = true;
             for (const index of [...open.keys()]) closeBlock(index);

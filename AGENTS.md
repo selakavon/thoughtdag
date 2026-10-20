@@ -17,7 +17,7 @@ npm run lint
 ## 架构
 
 - `server.mjs` — 唯一后端文件：Express 代理，用 Vercel AI SDK（`ai` + `@ai-sdk/openai-compatible` + `zhipu-ai-provider`）调 LLM；含 agentic 网页搜索 + 行内引用（搜索后保证有综合回答）。
-- `runtime/claude-print.mjs` — `claude -p` 封装成 AI SDK 语言模型（Claude 订阅通过本机 Claude Code CLI 回答，无 API key）；`.env` 的 `CLAUDE_CODE_MODELS` 或界面里的"Claude 订阅"入口启用。测试：`npm run test:claude-print`（假 CLI，不花 token）。
+- `runtime/claude-print.mjs` — `claude -p` 封装成 AI SDK 语言模型（Claude 订阅通过本机 Claude Code CLI 回答，无 API key；默认带 CLI 自己的只读网页工具 WebSearch/WebFetch，`CLAUDE_CODE_TOOLS` 可改，`CLAUDE_CODE_MCP_CONFIG` 可加 MCP 服务器如浏览器；工具调用以一行说明走 reasoning 通道）；`.env` 的 `CLAUDE_CODE_MODELS` 或界面里的"Claude 订阅"入口启用。测试：`npm run test:claude-print`（假 CLI，不花 token）。
 - `deploy/` — sixkiller-server 上的部署：用户级 systemd 单元（无需 sudo；127.0.0.1:9122，`SERVE_DIST` 同源提供前端）、`install.sh`（首次安装）、`deploy.sh`（拉取、构建、重启）、`publish.sh`（Cloudflare Access 应用 + 隧道路由 + DNS，幂等）。公网地址 `thoughtdag.sixkiller.tech`，在 Cloudflare Access（仅所有者）之后；隧道/Access 的约定见 github.com/selakavon/hermes。
 - `src/store/` — zustand 全局状态；持久化用 idb-keyval（IndexedDB）。
 - `src/components/` — 画布基于 `@xyflow/react`（React Flow）：`ThoughtNode`、`ThoughtEdgeView`、`SelectionToolbar`（圈选对齐，对齐前有确认提示）、`focus-panel/`。

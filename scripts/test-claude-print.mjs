@@ -6,7 +6,7 @@ import { streamText, generateText, jsonSchema } from 'ai';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { createClaudePrint, claudeAuthStatus, flattenPrompt, locateClaude, CLAUDE_PRINT_MODELS, isClaudePrintURL, CLAUDE_PRINT_URL } from '../runtime/claude-print.mjs';
+import { createClaudePrint, claudeAuthStatus, flattenPrompt, locateClaude, toolNote, mcpServerNames, CLAUDE_PRINT_MODELS, isClaudePrintURL, CLAUDE_PRINT_URL } from '../runtime/claude-print.mjs';
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'td-claude-print-'));
 const fakeBin = path.join(tmp, 'claude');
@@ -35,6 +35,19 @@ process.stdin.on('end', () => {
   }
   if (mode === 'crash') { process.stderr.write('segfault-ish\\n'); process.exit(3); }
   const ev = (event) => out({ type: 'stream_event', event });
+  if (mode === 'tools') {
+    // a web search first: a text block, a tool_use block, the tool result, then the answer in a second message
+    ev({ type: 'message_start', message: { model: 'claude-opus-5-5', id: 'msg_0' } });
+    ev({ type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } });
+    ev({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'Let me check. ' } });
+    ev({ type: 'content_block_stop', index: 0 });
+    ev({ type: 'content_block_start', index: 1, content_block: { type: 'tool_use', id: 'tu_1', name: 'WebSearch', input: {} } });
+    ev({ type: 'content_block_delta', index: 1, delta: { type: 'input_json_delta', partial_json: '{"query":"node lts"}' } });
+    ev({ type: 'content_block_stop', index: 1 });
+    ev({ type: 'message_delta', delta: { stop_reason: 'tool_use' }, usage: { input_tokens: 5, output_tokens: 3 } });
+    out({ type: 'assistant', message: { model: 'claude-opus-5-5', content: [{ type: 'text', text: 'Let me check. ' }, { type: 'tool_use', id: 'tu_1', name: 'WebSearch', input: { query: 'node lts' } }] } });
+    out({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'tu_1', content: 'v24' }] } });
+  }
   ev({ type: 'message_start', message: { model: 'claude-opus-5-5', id: 'msg_1' } });
   ev({ type: 'content_block_start', index: 0, content_block: { type: 'thinking', thinking: '' } });
   ev({ type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: 'pondering' } });
@@ -113,7 +126,7 @@ const provider = createClaudePrint({ bin: fakeBin, env: { FAKE_CLAUDE_LOG: log, 
   check('CLI: print mode with stream-json both ways and partial messages', l.argv.includes('-p') && argAfter('--output-format') === 'stream-json' && argAfter('--input-format') === 'stream-json' && l.argv.includes('--include-partial-messages') && l.argv.includes('--verbose'));
   check('CLI: the model alias is the id without the claude-code/ namespace', argAfter('--model') === 'opus', JSON.stringify(l.argv));
   check('CLI: the system prompt REPLACES Claude Code\'s own (not appended)', argAfter('--system-prompt')?.startsWith('You are terse.') && !l.argv.includes('--append-system-prompt'));
-  check('CLI: no built-in tools, no session file, no slash commands, no settings or MCP servers', argAfter('--tools') === '' && l.argv.includes('--no-session-persistence') && l.argv.includes('--disable-slash-commands') && l.argv.includes('--strict-mcp-config') && argAfter('--setting-sources') === '');
+  check('CLI: the read-only web tools by default, pre-approved; no session file, no slash commands, no settings or MCP servers', argAfter('--tools') === 'WebSearch,WebFetch' && argAfter('--allowedTools') === 'WebSearch,WebFetch' && !l.argv.includes('--mcp-config') && l.argv.includes('--no-session-persistence') && l.argv.includes('--disable-slash-commands') && l.argv.includes('--strict-mcp-config') && argAfter('--setting-sources') === '', JSON.stringify(l.argv));
   check('CLI: provider option effort → --effort', argAfter('--effort') === 'low', JSON.stringify(l.argv));
   check('CLI: the question is one stream-json user message', l.stdin?.type === 'user' && l.stdin.message?.content?.[0]?.text === 'Say hi', JSON.stringify(l.stdin));
   check('CLI: runs in the configured working directory', l.cwd === tmp, l.cwd);
@@ -209,6 +222,36 @@ const provider = createClaudePrint({ bin: fakeBin, env: { FAKE_CLAUDE_LOG: log, 
   const t0 = Date.now();
   try { await generateText({ model: hang('claude-code/opus'), prompt: 'x' }); } catch (e) { err = e; }
   check('a CLI that goes silent is stopped by the idle watchdog', /no activity|idle|silent/i.test(String(err?.message)) && Date.now() - t0 < 5000, String(err?.message));
+}
+
+{
+  // the CLI's own tools: a search turn streams a note on the reasoning channel, ids stay unique across messages
+  const tooled = createClaudePrint({ bin: fakeBin, env: { FAKE_CLAUDE_LOG: log, FAKE_CLAUDE_MODE: 'tools' } });
+  const result = streamText({ model: tooled('claude-code/opus'), prompt: 'Node LTS?' });
+  let text = ''; const reasoning = []; const ids = new Set(); let dup = false;
+  for await (const part of result.fullStream) {
+    if (part.type === 'text-start') { if (ids.has(part.id)) dup = true; ids.add(part.id); }
+    else if (part.type === 'text-delta') text += part.text;
+    else if (part.type === 'reasoning-delta') reasoning.push(part.text);
+    else if (part.type === 'error') throw part.error;
+  }
+  check('tools: text from both CLI turns arrives, with distinct block ids', text === 'Let me check. Hello world' && !dup, `text=${JSON.stringify(text)} dup=${dup}`);
+  check('tools: the search is reported as a one-line note on the reasoning channel', reasoning.some((r) => r === 'Searching the web: node lts'), JSON.stringify(reasoning));
+}
+
+{
+  // the operator's tool list and an MCP config reach the CLI, both pre-approved; '' for a turn switches everything off
+  const mcp = path.join(tmp, 'mcp.json');
+  fs.writeFileSync(mcp, JSON.stringify({ mcpServers: { browser: { command: 'x' } } }));
+  const custom = createClaudePrint({ bin: fakeBin, env: { FAKE_CLAUDE_LOG: log }, tools: 'WebFetch', mcpConfig: mcp });
+  await generateText({ model: custom('claude-code/opus'), prompt: 'x' });
+  let l = readLog(); let argAfter = (flag) => l.argv[l.argv.indexOf(flag) + 1];
+  check('tools: the configured list is offered and allowed, MCP servers allowed by name, the config passed', argAfter('--tools') === 'WebFetch' && argAfter('--allowedTools') === 'WebFetch,mcp__browser' && argAfter('--mcp-config') === mcp, JSON.stringify(l.argv));
+  await generateText({ model: custom('claude-code/opus'), prompt: 'x', providerOptions: { 'claude-code': { tools: '' } } });
+  l = readLog();
+  check('tools: a turn with tools \'\' runs with no tools, no allow list and no MCP config', argAfter('--tools') === '' && !l.argv.includes('--allowedTools') && !l.argv.includes('--mcp-config'), JSON.stringify(l.argv));
+  check('toolNote: web tools read naturally, MCP tools by their short name', toolNote({ name: 'WebFetch', input: { url: 'https://a.b' } }) === 'Reading https://a.b' && toolNote({ name: 'mcp__browser__browser_navigate', input: { url: 'https://a.b' } }) === 'browser_navigate: url=https://a.b');
+  check('mcpServerNames: a path or JSON text, [] when unreadable', mcpServerNames(mcp).join() === 'browser' && mcpServerNames('{"mcpServers":{"a":{},"b":{}}}').join() === 'a,b' && mcpServerNames('/nope.json').length === 0);
 }
 
 {

@@ -11,7 +11,7 @@ import { createAnthropic } from '@ai-sdk/anthropic';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createDeepSeek } from '@ai-sdk/deepseek';
 import { getDocument, GlobalWorkerOptions } from 'pdfjs-dist/legacy/build/pdf.mjs';
-import { createClaudePrint, locateClaude, claudeAuthStatus, CLAUDE_PRINT_MODELS, isClaudePrintURL } from './runtime/claude-print.mjs';
+import { createClaudePrint, locateClaude, claudeAuthStatus, CLAUDE_PRINT_MODELS, isClaudePrintURL, DEFAULT_TOOLS as CLAUDE_PRINT_DEFAULT_TOOLS } from './runtime/claude-print.mjs';
 // Inside Electron's utilityProcess pdfjs does not consider itself in Node
 // (process.versions.electron flips its environment check) and refuses to run
 // without a workerSrc. Point its fake worker at the real worker module so
@@ -185,13 +185,23 @@ if (process.env.OLLAMA_MODELS) {
 // it on at startup (the browser's "Claude plan" door does the same without
 // .env); CLAUDE_CODE_BIN names the binary when it is not on PATH;
 // CLAUDE_CODE_EFFORT sets a default effort level. The CLI runs stateless —
-// no tools, no session files — so the proxy's own search tools stay off for
-// these models (noTools): the CLI cannot call back into this process.
+// no session files — with its own read-only web tools (CLAUDE_CODE_TOOLS,
+// default WebSearch,WebFetch; "" for none) and, when CLAUDE_CODE_MCP_CONFIG
+// names a Claude Code MCP config, those servers too (a browser, say). The
+// proxy's own search tools stay off for these models (noTools): the CLI
+// cannot call back into this process. The interface's web-search switch
+// turns the CLI's web tools off for that turn.
 // An ANTHROPIC_* key in ThoughtDAG's .env belongs to the proxy's Anthropic
 // provider; handed on to the CLI it would bill the API instead of the plan.
 // Keys from the shell are the person's own CLI setup and pass through.
 const CLAUDE_PRINT_ENV = Object.fromEntries([...DOTENV_KEYS].filter((k) => k.startsWith('ANTHROPIC_')).map((k) => [k, undefined]));
-const claudePrint = createClaudePrint({ effort: process.env.CLAUDE_CODE_EFFORT || undefined, env: CLAUDE_PRINT_ENV });
+const CLAUDE_PRINT_TOOLS = process.env.CLAUDE_CODE_TOOLS ?? CLAUDE_PRINT_DEFAULT_TOOLS;
+const claudePrint = createClaudePrint({
+  effort: process.env.CLAUDE_CODE_EFFORT || undefined, env: CLAUDE_PRINT_ENV,
+  tools: CLAUDE_PRINT_TOOLS, mcpConfig: process.env.CLAUDE_CODE_MCP_CONFIG || undefined,
+});
+/** Provider options for one turn: the CLI's web tools follow the interface's web-search switch. */
+const claudePrintTurn = (base, webOn) => (webOn ? base : { ...(base ?? {}), 'claude-code': { ...(base?.['claude-code'] ?? {}), tools: '' } });
 /** Is the CLI here and signed in? `{ ok }` or `{ ok: false, error }` in the person's words. */
 async function claudePrintReady() {
   const { path: bin, searched } = await locateClaude();
@@ -205,7 +215,7 @@ if (process.env.CLAUDE_CODE_MODELS) {
   register(ids, 'Claude Code', (id) => claudePrint(id), { vision: true, noTools: true });
   void claudePrintReady().then((r) => {
     if (!r.ok) console.warn(`⚠ CLAUDE_CODE_MODELS is set but ${r.error}`);
-    else console.log(`Claude Code: ${r.bin}${r.auth?.subscriptionType ? ` (${r.auth.authMethod ?? 'signed in'}, ${r.auth.subscriptionType} plan)` : ''} — ${ids.join(', ')}`);
+    else console.log(`Claude Code: ${r.bin}${r.auth?.subscriptionType ? ` (${r.auth.authMethod ?? 'signed in'}, ${r.auth.subscriptionType} plan)` : ''} — ${ids.join(', ')}; tools: ${CLAUDE_PRINT_TOOLS || 'none'}${process.env.CLAUDE_CODE_MCP_CONFIG ? ` + MCP ${process.env.CLAUDE_CODE_MCP_CONFIG}` : ''}`);
   });
 }
 
@@ -1034,7 +1044,8 @@ app.post('/api/stream', async (req, res) => {
   // One frame up front lets it say "searching the web" and stamp the answer.
   if (gatewayOnline) res.write(`data: ${JSON.stringify({ gatewaySearch: true })}\n\n`);
 
-  // a model that cannot call back into this process (the Claude plan CLI) gets no tools
+  // a model that cannot call back into this process (the Claude plan CLI) gets none of
+  // these tools; it brings its own web tools, which follow the interface's switch
   const tools = entry.noTools ? undefined : makeTools(
     sources,
     (name, query) => {
@@ -1071,7 +1082,7 @@ app.post('/api/stream', async (req, res) => {
       model: gatewayOnline ? entry.online() : entry.model(),
       system: prompt.system,
       messages: prompt.messages,
-      providerOptions: entry.providerOptions,
+      providerOptions: entry.noTools ? claudePrintTurn(entry.providerOptions, webSearch !== false) : entry.providerOptions,
       abortSignal: aborter.signal,
       tools,
       experimental_transform: smoothStream({ chunking: /[\u3040-\u30ff\u4e00-\u9fff]|\S+\s+/ }),

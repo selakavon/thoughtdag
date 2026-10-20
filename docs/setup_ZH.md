@@ -31,7 +31,7 @@ ThoughtDAG 会处理预设 endpoint、读取可用模型、保留你的选择，
 
 普通消费者订阅不一定同时提供第三方 API 访问。App 中的 **ChatGPT 订阅**属于可选的本地兼容入口：ThoughtDAG 可以连接已经在本机运行的适配服务，但当前版本不会替你安装或启动该服务。没有这项本地环境时，使用 OpenRouter、服务商 API key 或本地 Ollama 更直接。
 
-**Claude 订阅**入口使用本机已安装并登录的 Claude Code 命令行：每次回答代理都会运行一次 `claude -p`，额度走你的订阅，不涉及 API key。**获取模型列表**会检查命令行是否已安装并登录，然后列出它的模型系列（Opus、Sonnet、Haiku、Fable）。命令行以关闭自带工具、设置和会话文件的方式运行，回答是一次普通补全：这些模型上没有 ThoughtDAG 的网页搜索和学术搜索工具，图片输入照常可用。桌面版和本地运行的 ThoughtDAG 可以使用这个入口，线上版连不到你的本机。源码运行也可以不经界面、直接在 `.env` 里配置：`CLAUDE_CODE_MODELS="opus,sonnet"` 在启动时注册模型，`CLAUDE_CODE_BIN` 在 `claude` 不在 `PATH` 上时指定路径，`CLAUDE_CODE_EFFORT` 设置默认推理力度（`low` 到 `max`）。ThoughtDAG `.env` 里的 `ANTHROPIC_API_KEY` 不会传给命令行，回答的始终是订阅。
+**Claude 订阅**入口使用本机已安装并登录的 Claude Code 命令行：每次回答代理都会运行一次 `claude -p`，额度走你的订阅，不涉及 API key。**获取模型列表**会检查命令行是否已安装并登录，然后列出它的模型系列（Opus、Sonnet、Haiku、Fable）。命令行以关闭设置和会话文件的方式运行，工具只保留只读的网页查询（网页搜索和读取网页），所以这些模型可以上网查资料；每次查询会在回答的推理区显示一行说明。界面里的网页搜索开关可以按轮次关掉它。这些模型上没有 ThoughtDAG 自己的网页搜索和学术搜索工具，图片输入照常可用。`CLAUDE_CODE_TOOLS` 修改工具列表（`""` 表示不给工具），`CLAUDE_CODE_MCP_CONFIG` 指定一个 Claude Code 的 MCP 配置文件，命令行也可以使用其中的服务器，例如浏览器自动化。桌面版和本地运行的 ThoughtDAG 可以使用这个入口，线上版连不到你的本机。源码运行也可以不经界面、直接在 `.env` 里配置：`CLAUDE_CODE_MODELS="opus,sonnet"` 在启动时注册模型，`CLAUDE_CODE_BIN` 在 `claude` 不在 `PATH` 上时指定路径，`CLAUDE_CODE_EFFORT` 设置默认推理力度（`low` 到 `max`）。ThoughtDAG `.env` 里的 `ANTHROPIC_API_KEY` 不会传给命令行，回答的始终是订阅。
 
 ## Ollama 本地模型
 
